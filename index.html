@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Defense Game</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #690061;
+            font-family: Arial, sans-serif;
+        }
+        #homeScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #690061;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #ffffff;
+            z-index: 10;
+        }
+        #homeScreen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        #homeScreen button {
+            padding: 10px 20px;
+            font-size: 24px;
+            cursor: pointer;
+            background-color: #ff98f1;
+            border: none;
+            border-radius: 5px;
+        }
+        #gameContainer {
+            display: none;
+        }
+        #stats {
+            margin-bottom: 10px;
+            color: #ffffff;
+            font-size: 16px;
+            background-color: rgba(68, 0, 48, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        canvas {
+            border: 2px solid #000000;
+            background-color: #ff98f1; /* Light green field */
+        }
+        #pauseBtn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        #homeBtn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(50px);
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="homeScreen">
+        <h1>Tower Defense Game</h1>
+        <button id="startBtn">Start Game</button>
+    </div>
+    <div id="gameContainer">
+        <div id="stats">
+            Health: <span id="health">20</span> | Money: <span id="money">150</span> | Wave: <span id="wave">1</span>/20
+        </div>
+        <canvas id="gameCanvas" width="1200" height="900"></canvas>
+        <button id="pauseBtn">Pause</button>
+        <button id="homeBtn">Home</button>
+    </div>
+
+    <script>
+        const homeScreen = document.getElementById('homeScreen');
+        const gameContainer = document.getElementById('gameContainer');
+        const startBtn = document.getElementById('startBtn');
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        const healthElement = document.getElementById('health');
+        const moneyElement = document.getElementById('money');
+        const waveElement = document.getElementById('wave');
+        const pauseBtn = document.getElementById('pauseBtn');
+        const homeBtn = document.getElementById('homeBtn');
+
+        let health = 20;
+        let money = 150;
+        let wave = 1;
+        let placingTower = false;
+        let mouseX = 0;
+        let mouseY = 0;
+        let hoveredTower = null;
+        const maxWaves = 20;
+        let countdownTimer = 5;
+        let isCountingDown = false;
+        let paused = true; // Start paused
+
+        // Function to get enemies per wave
+        function getEnemiesPerWave(w) {
+            if (w === 1) return 3;
+            if (w === 2) return 5;
+            if (w === 3) return 10;
+            if (w === 4) return 15;
+            if (w === 5) return 20;
+            if (w === 6) return 25;
+            if (w >= 7 && w <= 9) return 50;
+            if (w === 10) return 1; // Boss only
+            if (w >= 11 && w <= 19) return 50;
+            if (w === 20) return 1; // Boss only
+            return 5; // Default
+        }
+
+        let enemiesPerWave = getEnemiesPerWave(wave);
+        let blueEnemiesPerWave = wave >= 5 ? 2 : 0;
+
+        // Scaled and slightly adjusted path: Straight → Up → Straight → Down → Down → Straight → Up → Straight → Down → Straight → Up → Straight → Up → Straight → Down → Straight
+        // Scaled by 1.5, with minor adjustments (e.g., small shifts in y-coordinates)
+        const scale = 1.5;
+        const path = [
+            { x: 0 * scale, y: height / 2 },     // Start
+            { x: 100 * scale, y: height / 2 },   // Straight
+            { x: 100 * scale, y: height / 2 - 110 * scale }, // Up (adjusted slightly)
+            { x: 200 * scale, y: height / 2 - 110 * scale }, // Straight
+            { x: 200 * scale, y: height / 2 + 10 },   // Down (adjusted)
+            { x: 200 * scale, y: height / 2 + 110 * scale }, // Down
+            { x: 300 * scale, y: height / 2 + 110 * scale }, // Straight
+            { x: 300 * scale, y: height / 2 - 10 },   // Up (adjusted)
+            { x: 400 * scale, y: height / 2 - 10 },   // Straight
+            { x: 400 * scale, y: height / 2 + 110 * scale }, // Down
+            { x: 500 * scale, y: height / 2 + 110 * scale }, // Straight
+            { x: 500 * scale, y: height / 2 },   // Up
+            { x: 600 * scale, y: height / 2 },   // Straight
+            { x: 600 * scale, y: height / 2 - 110 * scale }, // Up
+            { x: 700 * scale, y: height / 2 - 110 * scale }, // Straight
+            { x: 700 * scale, y: height / 2 + 10 },   // Down (adjusted)
+            { x: 800 * scale, y: height / 2 + 10 }    // Straight (adjusted)
+        ];
+
+        // Enemy class
+        class Enemy {
+            constructor(isBoss = false, type = 'red') {
+                this.path = path;
+                this.x = this.path[0].x;
+                this.y = this.path[0].y;
+                this.speed = isBoss ? 0.5 : 1;
+                this.isBoss = isBoss;
+                this.type = type;
+                this.radius = isBoss ? 20 : 10;
+                this.health = this.isBoss ? (wave === 20 ? 2000 : 1000) : this.type === 'blue' ? 100 + (wave - 1) * 5 + 20 : 100 + (wave - 1) * 5;
+                this.maxHealth = this.health;
+                this.pointIndex = 0;
+                this.active = true;
+            }
+
+            draw() {
+                if (!this.active) return;
+                if (this.isBoss) {
+                    ctx.fillStyle = '#800080'; // Purple for boss
+                } else if (this.type === 'blue') {
+                    ctx.fillStyle = '#0000FF'; // Blue
+                } else {
+                    ctx.fillStyle = '#FF0000'; // Red
+                }
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                const barWidth = this.isBoss ? 50 : 30;
+                const barHeight = 5;
+                ctx.fillStyle = '#000';
+                ctx.fillRect(this.x - barWidth / 2, this.y - 25, barWidth, barHeight);
+                ctx.fillStyle = '#00FF00';
+                ctx.fillRect(this.x - barWidth / 2, this.y - 25, (this.health / this.maxHealth) * barWidth, barHeight);
+                ctx.fillStyle = '#FFF';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.health, this.x, this.y - 30);
+            }
+
+            update() {
+                if (!this.active) return;
+                if (this.pointIndex < this.path.length - 1) {
+                    const target = this.path[this.pointIndex + 1];
+                    const dx = target.x - this.x;
+                    const dy = target.y - this.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < this.speed) {
+                        this.pointIndex++;
+                    } else {
+                        this.x += (dx / dist) * this.speed;
+                        this.y += (dy / dist) * this.speed;
+                    }
+                } else {
+                    health--;
+                    healthElement.textContent = health;
+                    this.active = false;
+                    if (health <= 0) {
+                        alert('Game Over! Wave: ' + wave);
+                        location.reload();
+                    }
+                }
+            }
+
+            takeDamage(dmg) {
+                this.health -= dmg;
+                if (this.health <= 0) {
+                    this.active = false;
+                    money += 20;
+                    moneyElement.textContent = money;
+                }
+            }
+        }
+
+        // Tower class
+        class Tower {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.range = 100;
+                this.damage = 30;
+                this.cooldown = 0;
+                this.maxCooldown = 90;
+                this.level = 1; // Start at level 1
+            }
+
+            draw() {
+                let fillStyle;
+                if (this.level === 1) {
+                    fillStyle = '#008000'; // Green
+                } else if (this.level === 2) {
+                    fillStyle = '#800080'; // Purple
+                } else if (this.level === 3) {
+                    fillStyle = '#FFA500'; // Orange
+                } else if (this.level === 4) {
+                    fillStyle = '#FF0000'; // Red
+                } else if (this.level >= 5) {
+                    // Rainbow gradient
+                    const gradient = ctx.createLinearGradient(this.x - 15, this.y - 15, this.x + 15, this.y + 15);
+                    gradient.addColorStop(0, '#FF0000'); // Red
+                    gradient.addColorStop(0.2, '#FF7F00'); // Orange
+                    gradient.addColorStop(0.4, '#FFFF00'); // Yellow
+                    gradient.addColorStop(0.6, '#00FF00'); // Green
+                    gradient.addColorStop(0.8, '#0000FF'); // Blue
+                    gradient.addColorStop(1, '#8B00FF'); // Violet
+                    fillStyle = gradient;
+                }
+                // Draw larger border box
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 5;
+                ctx.strokeRect(this.x - 25, this.y - 25, 50, 50); // Larger box: 50x50
+                // Fill the inside (smaller now)
+                ctx.fillStyle = fillStyle;
+                ctx.fillRect(this.x - 10, this.y - 10, 20, 20); // Inside: 20x20
+                if (this === hoveredTower) {
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 0.5; // Thinner range circle
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.range, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.lineWidth = 1; // Reset to default
+                }
+            }
+
+            update() {
+                if (this.cooldown > 0) this.cooldown--;
+                let firstEnemy = null;
+                let maxPointIndex = -1;
+                enemies.forEach(enemy => {
+                    if (!enemy.active) return;
+                    const dist = Math.sqrt((enemy.x - this.x) ** 2 + (enemy.y - this.y) ** 2);
+                    if (dist <= this.range && enemy.pointIndex > maxPointIndex) {
+                        maxPointIndex = enemy.pointIndex;
+                        firstEnemy = enemy;
+                    }
+                });
+                if (firstEnemy && this.cooldown <= 0) {
+                    firstEnemy.takeDamage(this.damage);
+                    this.cooldown = this.maxCooldown;
+                    ctx.strokeStyle = '#FFFF00';
+                    ctx.lineWidth = 0.5; // Thinner bullet
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(firstEnemy.x, firstEnemy.y);
+                    ctx.stroke();
+                    ctx.lineWidth = 1; // Reset to default
+                }
+            }
+
+            upgrade() {
+                let cost = 0;
+                if (this.level === 1) cost = 50; // To level 2
+                else if (this.level === 2) cost = 100; // To level 3
+                else if (this.level === 3) cost = 200; // To level 4
+                else if (this.level === 4) cost = 350; // To level 5
+                if (money >= cost && this.level < 5) {
+                    this.level++;
+                    this.damage += 20;
+                    this.range += 20;
+                    money -= cost;
+                    moneyElement.textContent = money;
+                }
+            }
+        }
+
+        let enemies = [];
+        let towers = [];
+        let enemySpawnTimer = 0;
+        let enemiesSpawned = 0;
+        let blueEnemiesSpawned = 0;
+
+        // Start button
+        startBtn.addEventListener('click', () => {
+            homeScreen.style.display = 'none';
+            gameContainer.style.display = 'block';
+            paused = false;
+        });
+
+        // Pause button
+        pauseBtn.addEventListener('click', () => {
+            paused = !paused;
+            pauseBtn.textContent = paused ? 'Unpause' : 'Pause';
+        });
+
+        // Home button
+        homeBtn.addEventListener('click', () => {
+            location.reload();
+        });
+
+        // Key events
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyB') {
+                if (money >= 20) {
+                    placingTower = true;
+                }
+            }
+            if (e.code === 'KeyU') {
+                if (hoveredTower) {
+                    hoveredTower.upgrade();
+                }
+            }
+        });
+
+        // Mouse events
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            hoveredTower = null;
+            towers.forEach(tower => {
+                const dist = Math.sqrt((mouseX - tower.x) ** 2 + (mouseY - tower.y) ** 2);
+                if (dist < 20) {
+                    hoveredTower = tower;
+                }
+            });
+        });
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            if (placingTower) {
+                towers.push(new Tower(x, y));
+                money -= 20;
+                moneyElement.textContent = money;
+                placingTower = false;
+            }
+        });
+
+        // Game loop
+        function gameLoop() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw path (thinner now)
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 10; // Thinner path
+            ctx.beginPath();
+            path.forEach((point, i) => {
+                if (i === 0) ctx.moveTo(point.x, point.y);
+                else ctx.lineTo(point.x, point.y);
+            });
+            ctx.stroke();
+
+            if (!paused) {
+                // Handle countdown
+                if (isCountingDown) {
+                    countdownTimer--;
+                    if (countdownTimer <= 0) {
+                        isCountingDown = false;
+                        wave++;
+                        waveElement.textContent = wave;
+                        if (wave > maxWaves) {
+                            alert('You Win! Completed all 20 waves!');
+                            location.reload();
+                        }
+                        enemiesPerWave = getEnemiesPerWave(wave);
+                        blueEnemiesPerWave = wave >= 5 ? 2 : 0;
+                        enemiesSpawned = 0;
+                        blueEnemiesSpawned = 0;
+                        enemySpawnTimer = 0;
+                    }
+                } else {
+                    // Spawn enemies
+                    if (enemiesSpawned < enemiesPerWave) {
+                        enemySpawnTimer++;
+                        if (enemySpawnTimer > 60) {
+                            const isBossWave = (wave === 10 || wave === 20) && enemiesSpawned === 0;
+                            enemies.push(new Enemy(isBossWave, 'red'));
+                            enemiesSpawned++;
+                            enemySpawnTimer = 0;
+                        }
+                    } else if (blueEnemiesSpawned < blueEnemiesPerWave) {
+                        enemySpawnTimer++;
+                        if (enemySpawnTimer > 60) {
+                            enemies.push(new Enemy(false, 'blue'));
+                            blueEnemiesSpawned++;
+                            enemySpawnTimer = 0;
+                        }
+                    } else if (enemies.every(e => !e.active)) {
+                        // Add $50 for completing the wave
+                        money += 50;
+                        moneyElement.textContent = money;
+                        // Start countdown
+                        isCountingDown = true;
+                        countdownTimer = 120;
+                    }
+                }
+
+                // Update enemies and towers
+                enemies.forEach(enemy => enemy.update());
+                towers.forEach(tower => tower.update());
+            } else {
+                // Paused: show message
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, width, height);
+                ctx.fillStyle = '#FFF';
+                ctx.font = '48px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('PAUSED', width / 2, height / 2);
+            }
+
+            // Always draw
+            enemies.forEach(enemy => enemy.draw());
+            towers.forEach(tower => tower.draw());
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
